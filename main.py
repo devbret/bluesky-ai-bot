@@ -11,45 +11,44 @@ from config import BLUESKY_HANDLE, BLUESKY_APP_PASSWORD
 
 SUMMARY_LOG = "summaries.log"
 ERROR_LOG = "errors.log"
-CACHE = "cache.json"
+DATA_DIR = "data"
 
 client = Client()
 client.login(BLUESKY_HANDLE, BLUESKY_APP_PASSWORD)
 
+def ensure_data_dir():
+    if not os.path.exists(DATA_DIR):
+        os.makedirs(DATA_DIR)
+
+def get_today_filepath():
+    today_str = datetime.date.today().isoformat()
+    return os.path.join(DATA_DIR, f"{today_str}.jsonl")
+
+def append_posts(posts):
+    ensure_data_dir()
+    path = get_today_filepath()
+    with open(path, "a", encoding="utf-8") as f:
+        for post in posts:
+            json.dump(post, f, ensure_ascii=False)
+            f.write("\n")
+
 def log_summary(keyword, summary):
     timestamp = datetime.datetime.now().isoformat()
-    with open(SUMMARY_LOG, "a") as f:
+    with open(SUMMARY_LOG, "a", encoding="utf-8") as f:
         f.write(f"[{timestamp}] Keyword: {keyword}\n")
         f.write(f"{summary}\n\n")
 
-def cache_posts(posts):
-    if not isinstance(posts, list):
-        raise ValueError("Expected posts to be a list of dictionaries.")
-
-    existing_cache = []
-    if os.path.exists(CACHE):
-        with open(CACHE, "r") as f:
-            try:
-                existing_cache = json.load(f)
-            except json.JSONDecodeError:
-                print("⚠️ Warning: cache.json is corrupted or empty. Starting fresh.")
-
-    existing_cache.extend(posts)
-
-    with open(CACHE, "w") as f:
-        json.dump(existing_cache, f, indent=2)
-
-def log_error(error_msg):
+def log_error(e):
     timestamp = datetime.datetime.now().isoformat()
-    with open(ERROR_LOG, "a") as f:
-        f.write(f"[{timestamp}] {error_msg}\n\n")
+    with open(ERROR_LOG, "a", encoding="utf-8") as f:
+        f.write(f"[{timestamp}] {str(e)}\n")
 
 def try_post_summary(max_retries=3):
     for attempt in range(max_retries + 1):
         try:
             keyword, combined_text, posts = search_and_summarize_posts()
             if combined_text:
-                cache_posts(posts)
+                append_posts(posts)
                 summary = generate_summary(keyword, combined_text)
                 analysis = analyze_content(summary)
                 if not analysis["is_family_friendly"]:
