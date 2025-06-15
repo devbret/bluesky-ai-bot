@@ -57,7 +57,7 @@ def try_post_summary(max_retries=3):
                     return
                 if summary:
                     summary = summary.strip()
-                    clean_summary = summary[:295].rstrip() + "..." if len(summary) > 300 else summary
+                    clean_summary = "AI Bot: " + summary[:286].rstrip() + "..." if len(summary) > 300 else "AI Bot: " + summary
 
                     client.app.bsky.feed.post.create(
                         record={
