@@ -5,6 +5,7 @@ import os
 import json
 from curator import search_and_summarize_posts
 from comment_generator import generate_summary
+from content_moderation import analyze_content
 from atproto import Client
 from config import BLUESKY_HANDLE, BLUESKY_APP_PASSWORD
 
@@ -50,6 +51,11 @@ def try_post_summary(max_retries=3):
             if combined_text:
                 cache_posts(posts)
                 summary = generate_summary(keyword, combined_text)
+                analysis = analyze_content(summary)
+                if not analysis["is_family_friendly"]:
+                    print(f"🚫 Skipped posting due to content concerns: {analysis}")
+                    log_error(f"Skipped summary (keyword: {keyword}) due to moderation check: {analysis}")
+                    return
                 if summary:
                     summary = summary.strip()
                     clean_summary = summary[:295].rstrip() + "..." if len(summary) > 300 else summary
@@ -79,5 +85,5 @@ def run():
 if __name__ == "__main__":
     while True:
         run()
-        print("⏳ Waiting 5 minutes before next post...\n")
-        time.sleep(5 * 60)
+        print("⏳ Waiting 2 minutes before next post...\n")
+        time.sleep(2 * 60)
