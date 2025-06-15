@@ -1,2 +1,6 @@
 venv/
 .env
+errors.log
+__pycache__
+cache.json
+summaries.log
