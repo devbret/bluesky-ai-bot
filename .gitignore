@@ -1,5 +1,6 @@
 venv/
 data/
+.vscode/
 .env
 errors.log
 __pycache__

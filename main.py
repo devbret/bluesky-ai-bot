@@ -1,20 +1,51 @@
+import os
 import time
+import json
 import datetime
 import traceback
-import os
-import json
-from curator import search_and_summarize_posts
+import socket
+import threading
+
+from atproto import Client
 from comment_generator import generate_summary
 from content_moderation import analyze_content
-from atproto import Client
 from config import BLUESKY_HANDLE, BLUESKY_APP_PASSWORD
+
+socket.setdefaulttimeout(15)
 
 SUMMARY_LOG = "summaries.log"
 ERROR_LOG = "errors.log"
 DATA_DIR = "data"
+CYCLE_TIMEOUT_SECS = 45
 
-client = Client()
-client.login(BLUESKY_HANDLE, BLUESKY_APP_PASSWORD)
+def _json_default(o):
+    if o is None or isinstance(o, (str, int, float, bool)):
+        return o
+    if isinstance(o, (list, tuple, set)):
+        return [_json_default(x) for x in o]
+    if isinstance(o, dict):
+        return {k: _json_default(v) for k, v in o.items()}
+    md = getattr(o, "model_dump", None)
+    if callable(md):
+        try:
+            return _json_default(md())
+        except Exception:
+            pass
+    for attr in ("to_dict", "dict"):
+        fn = getattr(o, attr, None)
+        if callable(fn):
+            try:
+                return _json_default(fn())
+            except Exception:
+                pass
+    return str(o)
+
+
+def _now():
+    return datetime.datetime.now().isoformat()
+
+def debug(msg):
+    print(msg, flush=True)
 
 def ensure_data_dir():
     if not os.path.exists(DATA_DIR):
@@ -28,61 +59,109 @@ def append_posts(posts):
     ensure_data_dir()
     path = get_today_filepath()
     with open(path, "a", encoding="utf-8") as f:
-        for post in posts:
-            json.dump(post, f, ensure_ascii=False)
+        for post in posts or []:
+            json.dump(post, f, ensure_ascii=False, default=_json_default)
             f.write("\n")
 
 def log_summary(keyword, summary):
-    timestamp = datetime.datetime.now().isoformat()
     with open(SUMMARY_LOG, "a", encoding="utf-8") as f:
-        f.write(f"[{timestamp}] Keyword: {keyword}\n")
-        f.write(f"{summary}\n\n")
+        f.write(f"[{_now()}] Keyword: {keyword}\n{summary}\n\n")
 
 def log_error(e):
-    timestamp = datetime.datetime.now().isoformat()
     with open(ERROR_LOG, "a", encoding="utf-8") as f:
-        f.write(f"[{timestamp}] {str(e)}\n")
+        f.write(f"[{_now()}] {e}\n")
 
-def try_post_summary(max_retries=3):
-    for attempt in range(max_retries + 1):
+client = Client()
+
+def login_once():
+    handle = BLUESKY_HANDLE.strip()
+    app_pw = BLUESKY_APP_PASSWORD.strip()
+    if not handle or not app_pw:
+        raise RuntimeError("Missing BLUESKY credentials.")
+    debug(f"🔐 Logging into Bluesky as {handle!r}")
+    client.login(handle, app_pw)
+    debug(f"✅ Logged in. DID={client.me.did}, handle={client.me.handle}")
+
+from curator import search_and_summarize_posts
+
+def try_post_summary(max_retries=1):
+    for attempt in range(1, max_retries + 1):
         try:
-            keyword, combined_text, posts = search_and_summarize_posts()
-            if combined_text:
-                append_posts(posts)
-                summary = generate_summary(keyword, combined_text)
-                analysis = analyze_content(summary)
-                if not analysis["is_family_friendly"]:
-                    print(f"🚫 Skipped posting due to content concerns: {analysis}")
-                    log_error(f"Skipped summary (keyword: {keyword}) due to moderation check: {analysis}")
-                    return
-                if summary:
-                    summary = summary.strip()
-                    clean_summary = "AI Bot: " + summary[:286].rstrip() + "..." if len(summary) > 300 else "AI Bot: " + summary
+            result_holder = {"ok": False, "data": None, "err": None}
 
-                    client.app.bsky.feed.post.create(
-                        record={
-                            "$type": "app.bsky.feed.post",
-                            "text": clean_summary,
-                            "createdAt": client.get_current_time_iso()
-                        },
-                        repo=client.me.did
-                    )
-                    print(f"✅ Posted summary for keyword: {keyword}")
-                    print(f"📝 {clean_summary}\n")
-                    log_summary(keyword, clean_summary)
-                    return
-            else:
-                print(f"⚠️ Attempt {attempt + 1}: No posts found for keyword: {keyword}")
-        except Exception as e:
-            err_trace = traceback.format_exc()
-            print(f"❌ Error occurred on attempt {attempt + 1}:\n{err_trace}")
-            log_error(err_trace)
+            def _runner():
+                try:
+                    result_holder["data"] = search_and_summarize_posts(queries=1, limit=120)
+                    result_holder["ok"] = True
+                except Exception as e:
+                    result_holder["err"] = traceback.format_exc()
 
-def run():
-    try_post_summary()
+            t = threading.Thread(target=_runner, daemon=True)
+            debug("🔎 attempt=%d: calling curator.search_and_summarize_posts()" % attempt)
+            t.start()
+            t.join(CYCLE_TIMEOUT_SECS)
+
+            if t.is_alive():
+                debug("⏱️ curator timed out; skipping this cycle.")
+                return False
+
+            if not result_holder["ok"]:
+                raise RuntimeError(result_holder["err"] or "curator failed")
+
+            keyword, combined_text, posts = result_holder["data"]
+            debug(f"➡️ keyword={keyword!r} text_len={len(combined_text or '')} posts={len(posts or [])}")
+
+            if not combined_text:
+                msg = f"No posts found or empty combined_text for keyword={keyword!r}"
+                debug(f"⚠️ {msg}")
+                log_error(msg)
+                return False
+
+            append_posts(posts)
+            debug("🧠 Generating summary…")
+            summary = generate_summary(keyword, combined_text) or ""
+            debug(f"✍️ summary_len={len(summary)}")
+
+            debug("🛡️ Moderation…")
+            analysis = analyze_content(summary) or {}
+            if not bool(analysis.get("is_family_friendly", True)):
+                msg = f"Skipped posting due to moderation (keyword={keyword!r}), details={analysis}"
+                debug("🚫 " + msg)
+                log_error(msg)
+                return False
+
+            clean = summary.strip()
+            clean = (clean[:286].rstrip() + "...") if len(clean) > 300 else (clean)
+            if not clean:
+                debug("⚠️ Empty summary after cleaning; skipping.")
+                return False
+
+            debug("📤 Posting to Bluesky…")
+            client.send_post(text=clean)
+
+            debug(f"✅ Posted summary for keyword: {keyword}\n📝 {clean}\n")
+            log_summary(keyword, clean)
+            return True
+
+        except Exception:
+            err = traceback.format_exc()
+            debug(f"❌ Error on attempt {attempt}:\n{err}")
+            log_error(err)
+            time.sleep(2)
+
+    return False
+
+def main():
+    debug("🚀 Bot starting…")
+    login_once()
+    interval_sec = 120
+    while True:
+        debug(f"⏱️ cycle start {_now()}")
+        posted = try_post_summary()
+        if not posted:
+            debug("⏭️ No post this cycle.")
+        debug(f"⏳ Sleeping {interval_sec}s…")
+        time.sleep(interval_sec)
 
 if __name__ == "__main__":
-    while True:
-        run()
-        print("⏳ Waiting 2 minutes before next post...\n")
-        time.sleep(2 * 60)
+    main()
