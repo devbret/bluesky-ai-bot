@@ -78,9 +78,9 @@ def login_once():
     app_pw = BLUESKY_APP_PASSWORD.strip()
     if not handle or not app_pw:
         raise RuntimeError("Missing BLUESKY credentials.")
-    debug(f"🔐 Logging into Bluesky as {handle!r}")
+    debug(f"Logging into Bluesky as {handle!r}")
     client.login(handle, app_pw)
-    debug(f"✅ Logged in. DID={client.me.did}, handle={client.me.handle}")
+    debug(f"Logged in. DID={client.me.did}, handle={client.me.handle}")
 
 from curator import search_and_summarize_posts
 
@@ -97,70 +97,70 @@ def try_post_summary(max_retries=1):
                     result_holder["err"] = traceback.format_exc()
 
             t = threading.Thread(target=_runner, daemon=True)
-            debug("🔎 attempt=%d: calling curator.search_and_summarize_posts()" % attempt)
+            debug("attempt=%d: calling curator.search_and_summarize_posts()" % attempt)
             t.start()
             t.join(CYCLE_TIMEOUT_SECS)
 
             if t.is_alive():
-                debug("⏱️ curator timed out; skipping this cycle.")
+                debug("curator timed out; skipping this cycle.")
                 return False
 
             if not result_holder["ok"]:
                 raise RuntimeError(result_holder["err"] or "curator failed")
 
             keyword, combined_text, posts = result_holder["data"]
-            debug(f"➡️ keyword={keyword!r} text_len={len(combined_text or '')} posts={len(posts or [])}")
+            debug(f"keyword={keyword!r} text_len={len(combined_text or '')} posts={len(posts or [])}")
 
             if not combined_text:
                 msg = f"No posts found or empty combined_text for keyword={keyword!r}"
-                debug(f"⚠️ {msg}")
+                debug(f"{msg}")
                 log_error(msg)
                 return False
 
             append_posts(posts)
-            debug("🧠 Generating summary…")
+            debug("Generating summary…")
             summary = generate_summary(keyword, combined_text) or ""
-            debug(f"✍️ summary_len={len(summary)}")
+            debug(f"summary_len={len(summary)}")
 
-            debug("🛡️ Moderation…")
+            debug("Moderation…")
             analysis = analyze_content(summary) or {}
             if not bool(analysis.get("is_family_friendly", True)):
                 msg = f"Skipped posting due to moderation (keyword={keyword!r}), details={analysis}"
-                debug("🚫 " + msg)
+                debug("" + msg)
                 log_error(msg)
                 return False
 
             clean = summary.strip()
             clean = (clean[:286].rstrip() + "...") if len(clean) > 300 else (clean)
             if not clean:
-                debug("⚠️ Empty summary after cleaning; skipping.")
+                debug("Empty summary after cleaning; skipping.")
                 return False
 
-            debug("📤 Posting to Bluesky…")
+            debug("Posting to Bluesky…")
             client.send_post(text=clean)
 
-            debug(f"✅ Posted summary for keyword: {keyword}\n📝 {clean}\n")
+            debug(f"Posted summary for keyword: {keyword}\n {clean}\n")
             log_summary(keyword, clean)
             return True
 
         except Exception:
             err = traceback.format_exc()
-            debug(f"❌ Error on attempt {attempt}:\n{err}")
+            debug(f"Error on attempt {attempt}:\n{err}")
             log_error(err)
             time.sleep(2)
 
     return False
 
 def main():
-    debug("🚀 Bot starting…")
+    debug("Bot starting…")
     login_once()
-    interval_sec = 120
+    interval_sec = 23
     while True:
-        debug(f"⏱️ cycle start {_now()}")
+        debug(f"cycle start {_now()}")
         posted = try_post_summary()
         if not posted:
-            debug("⏭️ No post this cycle.")
-        debug(f"⏳ Sleeping {interval_sec}s…")
+            debug("No post this cycle.")
+        debug(f"Sleeping {interval_sec}s…")
         time.sleep(interval_sec)
 
 if __name__ == "__main__":

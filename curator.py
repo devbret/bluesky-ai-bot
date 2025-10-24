@@ -11,7 +11,7 @@ socket.setdefaulttimeout(15)
 client = Client()
 client.login(BLUESKY_HANDLE, BLUESKY_APP_PASSWORD)
 
-KEYWORDS = ["keywords", "of", "interest"]
+KEYWORDS = ["keywords", "keywords"]
 MAX_PER_QUERY = 120
 MIN_TEXT_LEN = 30
 PER_QUERY_TIME_CAP = 20 
@@ -31,10 +31,10 @@ def _collect_posts_for_query(q: str, per_query_limit: int) -> List[Any]:
 
     while len(posts) < per_query_limit:
         if time.monotonic() - start > PER_QUERY_TIME_CAP:
-            _debug(f"⏱️ time cap hit for query {q!r}")
+            _debug(f"Time cap hit for query {q!r}")
             break
         try:
-            _debug(f"🌐 search_posts q={q!r} have={len(posts)} cursor={bool(cursor)}")
+            _debug(f"search_posts q={q!r} have={len(posts)} cursor={bool(cursor)}")
             resp = client.app.bsky.feed.search_posts(
                 params={
                     "q": q,
@@ -42,14 +42,14 @@ def _collect_posts_for_query(q: str, per_query_limit: int) -> List[Any]:
                     "cursor": cursor
                 }
             )
-            _debug("🌐 got response")
+            _debug("Got response")
         except Exception as e:
-            _debug(f"❌ search_posts error for {q!r}: {e}")
+            _debug(f"search_posts error for {q!r}: {e}")
             break
 
         batch = getattr(resp, "posts", []) or []
         if not batch:
-            _debug("ℹ️ empty batch; done")
+            _debug("Empty batch; done")
             break
 
         posts.extend(batch)
@@ -109,7 +109,7 @@ def _post_dict(item: Any, kw: str) -> Dict[str, Any]:
     }
 
 def search_and_summarize_posts(queries: int = 1, limit: int = MAX_PER_QUERY):
-    _debug("➡️ curator.search_and_summarize_posts: start")
+    _debug("curator.search_and_summarize_posts: start")
     k1, k2 = _unique_keyword_pair()
     combined_keyword = f"{k1} {k2}"
     _debug(f"🔍 Searching for: {combined_keyword!r}")
@@ -130,6 +130,6 @@ def search_and_summarize_posts(queries: int = 1, limit: int = MAX_PER_QUERY):
             continue
 
     combined_text = "\n\n".join(p["text"] for p in kept)
-    _debug(f"✅ collected={len(raw)} kept={len(kept)} text_chars={len(combined_text)}")
-    _debug("⬅️ curator.search_and_summarize_posts: end")
+    _debug(f"collected={len(raw)} kept={len(kept)} text_chars={len(combined_text)}")
+    _debug("curator.search_and_summarize_posts: end")
     return combined_keyword, combined_text, kept
